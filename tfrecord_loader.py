@@ -39,9 +39,9 @@ class TFRecordLoader:
 
     def sample_once(self):
         for i in self.clean_index:
-            compression = "ZLIB" if "zstd" in i else ""
+            
 
-            file = tf.data.TFRecordDataset(i, compression_type=compression).map(self.parse_fn, num_parallel_calls=tf.data.AUTOTUNE)
+            file = tf.data.TFRecordDataset(i, compression_type='GZIP').map(self.parse_fn, num_parallel_calls=tf.data.AUTOTUNE)
             file = file.apply(tf.data.experimental.dense_to_ragged_batch(np.prod(self.bs), drop_remainder=True))
             file = file.prefetch(10)
 
@@ -78,80 +78,24 @@ class TFRecordNewInputs(TFRecordLoader):
     def __init__(self, index_fname, batch_size, sample_size, restore_state=None):
         def tf_parse(example_proto):
             features = {
-                "text": tf.io.VarLenFeature(tf.int64)
+                'input': tf.io.FixedLenFeature([168], tf.float32)
             }
-            parsed_features = tf.io.parse_single_example(example_proto, features)
-
-            return tf.cast(tf.sparse.to_dense(tf.sparse.reorder(parsed_features["text"])), tf.uint32)
+            data = tf.io.parse_single_example(example_proto, feature_description)
+            inp = tf.cast(data['input'][:128],tf.int32)
+            return inp,inp[49:]
 
         super().__init__(index_fname, batch_size, tf_parse, restore_state=restore_state)
 
 
-class TFRecordWIT(TFRecordLoader):
-    def __init__(self, index_fname, batch_size, restore_state=None, text_tokens=256):
-        self.tokenizer = GPT2TokenizerFast.from_pretrained("gpt2")
-        self.tokenizer.pad_token = "<|endoftext|>"
-        self.tokenizer.add_special_tokens({'sep_token': '<|sep|>', 'pad_token': '<|pad|>'})
 
-        def map_fn(example):
-            tokenizer = self.tokenizer
-
-            def decode(x):
-                return tokenizer(["<|endoftext|>" + i.decode() for i in x])["input_ids"]
-
-            texts = [
-                decode(example["context_page_description"]),
-                decode(example["context_section_description"]),
-                decode(example["caption_reference_description"]),
-                decode(example["caption_alt_text_description"]),
-                decode(example["caption_attribution_description"]),
-            ]
-
-            output = []
-
-            for text, dalle in zip(zip(*texts), example["dalle"]):
-                all_text = list(itertools.chain(*text))[-text_tokens+1:]
-
-                all_text += [tokenizer.pad_token_id] * ((text_tokens - 1) - len(all_text))
-
-                assert len(all_text) == text_tokens - 1
-
-                all_tokens = all_text + [tokenizer.sep_token_id] + list(dalle + tokenizer.vocab_size + 1)
-                output.append(all_tokens)
-
-            return np.array(output)
-
-        def tf_parse(example_proto):
-            features = {
-                "page_title": tf.io.FixedLenFeature([], tf.string),
-                "section_title": tf.io.FixedLenFeature([], tf.string),
-                "hierarchical_section_title": tf.io.FixedLenFeature([], tf.string),
-                "caption_reference_description": tf.io.FixedLenFeature([], tf.string),
-                "caption_attribution_description": tf.io.FixedLenFeature([], tf.string),
-                "caption_alt_text_description": tf.io.FixedLenFeature([], tf.string),
-                "mime_type": tf.io.FixedLenFeature([], tf.string),
-                "context_page_description": tf.io.FixedLenFeature([], tf.string),
-                "context_section_description": tf.io.FixedLenFeature([], tf.string),
-
-                "dalle": tf.io.FixedLenFeature([1024], tf.int64),
-            }
-
-            parsed_features = tf.io.parse_single_example(example_proto, features)
-
-            return parsed_features
-
-        super().__init__(index_fname, batch_size, tf_parse, map_fn, restore_state=restore_state)
 
 
 if __name__ == "__main__":
-    # d = TFRecordNewInputs("data/pile.val.index", (8, 32), 2048)
-    # for idx, i in enumerate(d.sample_once()):
-    #     print(i)
-    #     break
-
-    d = TFRecordWIT("data/wit_dalle.train.index", (8, 32))
+    d = TFRecordNewInputs("data/pile.val.index", (8, 32), 2048)
     for idx, i in enumerate(d.sample_once()):
         print(i)
         break
+
+    
 
     print()
