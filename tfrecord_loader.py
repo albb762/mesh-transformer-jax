@@ -49,10 +49,7 @@ class TFRecordLoader:
                 data = jax.tree_map(lambda x: x.numpy(), data)
                 data = self.map_fn(data)
 
-                if not self.file_idx_init and file_idx <= self.file_idx:
-                    if file_idx % 1000 == 0:
-                        print(f"skipping to batch {self.file_idx}, currently at {file_idx}")
-                    continue
+
                 self.file_idx_init = True
                 self.file_idx = file_idx
                 yield jax.tree_map(lambda x: x.reshape(self.bs + x.shape[1:]), data)
